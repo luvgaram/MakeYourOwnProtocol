@@ -9,6 +9,7 @@
 #include "util.h"
 
 #define CONNECT_TIMEOUT 5
+#define CONNECT_TRY 3
 
 #define NUM_STATE   3
 #define NUM_EVENT   8
@@ -132,14 +133,17 @@ struct state_action p_FSM[NUM_STATE][NUM_EVENT] = {
 
   // - CON_sent state
   {{ passive_con, CONNECTED }, { close_con, wait_CON }, { report_connect, CONNECTED }, { NULL,      CON_sent },
-   { NULL,        CON_sent },  { close_con, wait_CON }, { NULL,           CON_sent },  { close_con, wait_CON }},
+   { active_con, CON_sent },  { close_con, wait_CON }, { NULL,           CON_sent },  { close_con, wait_CON }},  // ej
+//   { NULL,        CON_sent },  { close_con, wait_CON }, { NULL,           CON_sent },  { close_con, wait_CON }},
 
-  // - CONNECTED state
-  {{ NULL, CONNECTED },        { close_con, wait_CON }, { NULL,      CONNECTED },      { report_data, CONNECTED },
+// - CONNECTED state
+  {{ passive_con, CONNECTED },        { close_con, wait_CON }, { NULL,      CONNECTED },      { report_data, CONNECTED },
+//  {{ NULL, CONNECTED },        { close_con, wait_CON }, { NULL,      CONNECTED },      { report_data, CONNECTED },
    { NULL, CONNECTED },        { close_con, wait_CON }, { send_data, CONNECTED },      { NULL,        CONNECTED }},
 };
 
 int data_count = 0;
+int timeout_count = 0; // ej
 
 struct p_event *get_event(void)
 {
@@ -149,9 +153,16 @@ loop:
     // Check if there is user command
     if (!kbhit()) {
         // Check if timer is timed-out
-        if(timedout) {
+        if (timedout) {
             timedout = 0;
-            event.event = TIMEOUT;
+			printf("timeout_count: %d\n", timeout_count);
+			if (timeout_count++ >= CONNECT_TRY) { // ej
+				event.event = TIMEOUT;
+				timeout_count = 0;
+			} else {
+				event.event = CONNECT;
+			}
+//            event.event = TIMEOUT;
         } else {
             // Check Packet arrival by event_wait()
             ssize_t n = Recv((char*)&event.packet, sizeof(struct packet));
