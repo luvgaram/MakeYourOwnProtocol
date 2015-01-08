@@ -11,20 +11,20 @@
 #define CONNECT_TIMEOUT 5
 #define CONNECT_TRY 3
 
-#define NUM_STATE   3
-#define NUM_EVENT   8
+#define NUM_STATE   4
+#define NUM_EVENT   9
 
 enum pakcet_type { F_CON = 0, F_FIN = 1, F_ACK = 2, F_DATA = 3 };   // Packet Type
-enum proto_state { wait_CON = 0, CON_sent = 1, CONNECTED = 2 };     // States
+enum proto_state { wait_CON = 0, CON_sent = 1, CONNECTED = 2, wait_ACK = 3 };     // States
 
 // Events
 enum proto_event { RCV_CON = 0, RCV_FIN = 1, RCV_ACK = 2, RCV_DATA = 3,
-                   CONNECT = 4, CLOSE = 5,   SEND = 6,    TIMEOUT = 7 };
+                   CONNECT = 4, CLOSE = 5,   SEND = 6,    TIMEOUT = 7,  TIMEOUT_3 = 8 };
 
 char *pkt_name[] = { "F_CON", "F_FIN", "F_ACK", "F_DATA" };
-char *st_name[] =  { "wait_CON", "CON_sent", "CONNECTED" };
+char *st_name[] =  { "wait_CON", "CON_sent", "CONNECTED", "wait_ACK" };
 char *ev_name[] =  { "RCV_CON", "RCV_FIN", "RCV_ACK", "RCV_DATA",
-                     "CONNECT", "CLOSE",   "SEND",    "TIMEOUT"   };
+                     "CONNECT", "CLOSE",   "SEND",    "TIMEOUT",    "TIMEOUT_3"};
 
 struct state_action {           // Protocol FSM Structure
     void (* action)(void *p);
@@ -38,6 +38,8 @@ struct packet {                 // 504 Byte Packet to & from Simulator
     char data[MAX_DATA_SIZE];
 };
 
+struct packet pkt;
+
 struct p_event {                // Event Structure
     enum proto_event event;
     struct packet packet;
@@ -45,7 +47,7 @@ struct p_event {                // Event Structure
 };
 
 enum proto_state c_state = wait_CON;         // Initial State
-volatile int timedout = 0;
+volatile int timedout	 = 0;
 
 static void timer_handler(int signum)
 {
@@ -73,9 +75,13 @@ void set_timer(int sec)
     timer.it_interval.tv_usec = 0;
     setitimer (ITIMER_REAL, &timer, NULL);
 }
+
+int data_count = 0;
+int timeout_count = 0; // ej
+
 void send_packet(int flag, void *p, int size)
 {
-    struct packet pkt;
+//    struct packet pkt;
     printf("SEND %s\n", pkt_name[flag]);
     
     pkt.type = flag;
@@ -88,6 +94,7 @@ void send_packet(int flag, void *p, int size)
 static void report_connect(void *p)
 {
     set_timer(0);           // Stop Timer
+    timeout_count = 0;      // counter init
     printf("Connected\n");
 }
 
@@ -95,6 +102,11 @@ static void passive_con(void *p)
 {
     send_packet(F_ACK, NULL, 0);
     report_connect(NULL);
+}
+
+static void send_ack(void *p)
+{
+    send_packet(F_ACK, NULL, 0);
 }
 
 static void active_con(void *p)
@@ -114,36 +126,50 @@ static void send_data(void *p)
     printf("Send Data to peer '%s' size:%d\n",
         ((struct p_event*)p)->packet.data, ((struct p_event*)p)->size);
     send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
+    set_timer(CONNECT_TIMEOUT);
 }
 
 static void report_data(void *p)
 {
     printf("Data Arrived data='%s' size:%d\n",
         ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
+    send_packet(F_ACK, NULL, 0);
+}
+
+static void remove_data(void *p)
+{
+    set_timer(0);           // Stop Timer
+    timeout_count = 0;      // counter init
+    printf("Data removed data='%s' size:%d\n",
+           ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
 }
 
 struct state_action p_FSM[NUM_STATE][NUM_EVENT] = {
   //  for each event:
-  //  RCV_CON,                 RCV_FIN,                 RCV_ACK,                       RCV_DATA,
-  //  CONNECT,                 CLOSE,                   SEND,                          TIMEOUT
+  //  RCV_CON,                 RCV_FIN,                 RCV_ACK,
+  //  RCV_DATA,                CONNECT,                 CLOSE,
+  //  SEND,                    TIMEOUT,                 TIMEOUT_3
 
   // - wait_CON state
-  {{ passive_con, CONNECTED }, { NULL, wait_CON },      { NULL, wait_CON },            { NULL, wait_CON },
-   { active_con,  CON_sent },  { NULL, wait_CON },      { NULL, wait_CON },            { NULL, wait_CON }},
+  {{ passive_con, CONNECTED }, { NULL, wait_CON }, { NULL, wait_CON },
+   { NULL, wait_CON }, { active_con,  CON_sent },  { NULL, wait_CON },
+   { NULL, wait_CON }, { NULL, wait_CON },  { NULL, wait_CON }},
 
   // - CON_sent state
-  {{ passive_con, CONNECTED }, { close_con, wait_CON }, { report_connect, CONNECTED }, { NULL,      CON_sent },
-   { active_con, CON_sent },  { close_con, wait_CON }, { NULL,           CON_sent },  { close_con, wait_CON }},  // ej
-//   { NULL,        CON_sent },  { close_con, wait_CON }, { NULL,           CON_sent },  { close_con, wait_CON }},
+  {{ passive_con, CONNECTED }, { close_con, wait_CON }, { report_connect, CONNECTED },
+   { NULL, CON_sent },  { active_con, CON_sent },  { close_con, wait_CON },
+   { NULL, CON_sent },  { active_con, CON_sent },  { close_con, wait_CON }},
 
-// - CONNECTED state
-  {{ passive_con, CONNECTED },        { close_con, wait_CON }, { NULL,      CONNECTED },      { report_data, CONNECTED },
-//  {{ NULL, CONNECTED },        { close_con, wait_CON }, { NULL,      CONNECTED },      { report_data, CONNECTED },
-   { NULL, CONNECTED },        { close_con, wait_CON }, { send_data, CONNECTED },      { NULL,        CONNECTED }},
+  // - CONNECTED state
+  {{ send_ack, CONNECTED }, { close_con, wait_CON }, { NULL, CONNECTED },
+   { report_data, CONNECTED }, { NULL, CONNECTED }, { close_con, wait_CON },
+   { send_data, wait_ACK }, { NULL, CONNECTED }, { NULL, CONNECTED }},
+    
+  // - wait_ACK state
+    {{ NULL, wait_ACK }, { close_con, wait_ACK }, { remove_data, CONNECTED },
+     { report_data, wait_ACK }, { NULL, wait_ACK }, { close_con, wait_ACK },
+     { NULL, wait_ACK }, { send_data, wait_ACK }, { close_con, wait_ACK }}
 };
-
-int data_count = 0;
-int timeout_count = 0; // ej
 
 struct p_event *get_event(void)
 {
@@ -157,12 +183,11 @@ loop:
             timedout = 0;
 			printf("timeout_count: %d\n", timeout_count);
 			if (timeout_count++ >= CONNECT_TRY) { // ej
-				event.event = TIMEOUT;
+				event.event = TIMEOUT_3;
 				timeout_count = 0;
-			} else {
-				event.event = CONNECT;
-			}
-//            event.event = TIMEOUT;
+            } else if (c_state == CON_sent || c_state == wait_ACK) {
+                event.event = TIMEOUT;
+            }
         } else {
             // Check Packet arrival by event_wait()
             ssize_t n = Recv((char*)&event.packet, sizeof(struct packet));
@@ -188,9 +213,12 @@ loop:
             case '0': event.event = CONNECT; break;
             case '1': event.event = CLOSE;   break;
             case '2':
-                event.event = SEND;
-                sprintf(event.packet.data, "%09d", data_count++);
-                event.size = strlen(event.packet.data) + 1;
+                if (c_state == CONNECTED) {
+                    event.event = SEND;
+                    sprintf(event.packet.data, "%09d", data_count++);
+                    event.size = strlen(event.packet.data) + 1;
+                } else
+                    printf("Cannot send message now...\n");
                 break;
             case '3': return NULL;  // QUIT
             default:
