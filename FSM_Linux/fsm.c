@@ -8,8 +8,8 @@
 
 #include "util.h"
 
-#define CONNECT_TIMEOUT 5
-#define CONNECT_TRY 3
+#define CONNECT_TIMEOUT 3
+#define CONNECT_TRY 10
 
 #define NUM_STATE   4
 #define NUM_EVENT   9
@@ -38,11 +38,12 @@ struct packet {                 // 504 Byte Packet to & from Simulator
     char data[MAX_DATA_SIZE];
 };
 
-struct packet pkt;
+// struct packet pkt;
 
 struct p_event {                // Event Structure
     enum proto_event event;
     struct packet packet;
+    struct packet snd_packet;
     int size;
 };
 
@@ -77,24 +78,24 @@ void set_timer(int sec)
 }
 
 int data_count = 0;
-int timeout_count = 0; // ej
+int timeout_count = 1; // ej
 
 void send_packet(int flag, void *p, int size)
 {
-//    struct packet pkt;
+    struct packet pkt;
     printf("SEND %s\n", pkt_name[flag]);
     
     pkt.type = flag;
     pkt.size = size;
     if (size)
-        memcpy(pkt.data, ((struct p_event *)p)->packet.data, (size > MAX_DATA_SIZE) ? MAX_DATA_SIZE : size);
+        memcpy(pkt.data, ((struct p_event *)p)->snd_packet.data, (size > MAX_DATA_SIZE) ? MAX_DATA_SIZE : size);
     Send((char *)&pkt, sizeof(struct packet) - MAX_DATA_SIZE + size);
 }
 
 static void report_connect(void *p)
 {
     set_timer(0);           // Stop Timer
-    timeout_count = 0;      // counter init
+    timeout_count = 1;      // counter init
     printf("Connected\n");
 }
 
@@ -124,7 +125,7 @@ static void close_con(void *p)
 static void send_data(void *p)
 {
     printf("Send Data to peer '%s' size:%d\n",
-        ((struct p_event*)p)->packet.data, ((struct p_event*)p)->size);
+        ((struct p_event*)p)->snd_packet.data, ((struct p_event*)p)->size);
     send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
     set_timer(CONNECT_TIMEOUT);
 }
@@ -139,9 +140,9 @@ static void report_data(void *p)
 static void remove_data(void *p)
 {
     set_timer(0);           // Stop Timer
-    timeout_count = 0;      // counter init
-    printf("Data removed data='%s' size:%d\n",
-           ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
+    timeout_count = 1;      // counter init
+    printf("Peer got data '%s' \n",
+           ((struct p_event*)p)->snd_packet.data);
 }
 
 struct state_action p_FSM[NUM_STATE][NUM_EVENT] = {
@@ -166,9 +167,9 @@ struct state_action p_FSM[NUM_STATE][NUM_EVENT] = {
    { send_data, wait_ACK }, { NULL, CONNECTED }, { NULL, CONNECTED }},
     
   // - wait_ACK state
-    {{ NULL, wait_ACK }, { close_con, wait_ACK }, { remove_data, CONNECTED },
-     { report_data, wait_ACK }, { NULL, wait_ACK }, { close_con, wait_ACK },
-     { NULL, wait_ACK }, { send_data, wait_ACK }, { close_con, wait_ACK }}
+  {{ NULL, wait_ACK }, { close_con, wait_ACK }, { remove_data, CONNECTED },
+   { report_data, wait_ACK }, { NULL, wait_ACK }, { close_con, wait_ACK },
+   { NULL, wait_ACK }, { send_data, wait_ACK }, { close_con, wait_ACK }}
 };
 
 struct p_event *get_event(void)
@@ -184,9 +185,11 @@ loop:
 			printf("timeout_count: %d\n", timeout_count);
 			if (timeout_count++ >= CONNECT_TRY) { // ej
 				event.event = TIMEOUT_3;
-				timeout_count = 0;
+				timeout_count = 1;
             } else if (c_state == CON_sent || c_state == wait_ACK) {
                 event.event = TIMEOUT;
+                
+                
             }
         } else {
             // Check Packet arrival by event_wait()
@@ -215,8 +218,8 @@ loop:
             case '2':
                 if (c_state == CONNECTED) {
                     event.event = SEND;
-                    sprintf(event.packet.data, "%09d", data_count++);
-                    event.size = strlen(event.packet.data) + 1;
+                    sprintf(event.snd_packet.data, "%09d", data_count++);
+                    event.size = strlen(event.snd_packet.data) + 1;
                 } else
                     printf("Cannot send message now...\n");
                 break;
