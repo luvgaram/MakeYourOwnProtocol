@@ -8,7 +8,7 @@
 
 #include "util.h"
 
-#define CONNECT_TIMEOUT 3
+#define CONNECT_TIMEOUT 2
 #define CONNECT_TRY 10
 
 #define NUM_STATE   4
@@ -78,7 +78,7 @@ void set_timer(int sec)
 }
 
 int data_count = 0;
-int timeout_count = 1; // ej
+int timeout_count = 1;
 
 void send_packet(int flag, void *p, int size)
 {
@@ -92,55 +92,87 @@ void send_packet(int flag, void *p, int size)
     Send((char *)&pkt, sizeof(struct packet) - MAX_DATA_SIZE + size);
 }
 
-static void report_connect(void *p)
-{
-    set_timer(0);           // Stop Timer
-    timeout_count = 1;      // counter init
+static void snd_con() {
+    send_packet(F_CON, NULL, 0);
+}
+
+static void snd_ack() {
+    send_packet(F_ACK, NULL, 0);
+}
+
+static void snd_data(void *p) {
+    send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
+}
+
+static void snd_fin() {
+    send_packet(F_FIN, NULL, 0);
+}
+
+static void strt_timer() {
+    set_timer(CONNECT_TIMEOUT);
+}
+
+static void stp_timer() {
+    set_timer(0);
+}
+
+static void init_counter() {
+    timeout_count = 1;
+}
+
+static void report_connect(void *p) {
+    stp_timer();
+    init_counter();
+    
+//    set_timer(0);
+//    timeout_count = 1;
     printf("Connected\n");
 }
 
-static void passive_con(void *p)
-{
-    send_packet(F_ACK, NULL, 0);
+static void send_ack(void *p) {
+    snd_ack();
+//    send_packet(F_ACK, NULL, 0);
+}
+
+static void passive_con(void *p) {
+    snd_ack();
+//    send_packet(F_ACK, NULL, 0);
     report_connect(NULL);
 }
 
-static void send_ack(void *p)
-{
-    send_packet(F_ACK, NULL, 0);
-}
-
-static void active_con(void *p)
-{
-    send_packet(F_CON, NULL, 0);
+static void active_con(void *p) {
+    snd_con();
+//    send_packet(F_CON, NULL, 0);
     set_timer(CONNECT_TIMEOUT);
 }
 
-static void close_con(void *p)
-{
-    send_packet(F_FIN, NULL, 0);
+static void close_con(void *p) {
+    snd_fin();
+//    send_packet(F_FIN, NULL, 0);
     printf("Connection Closed\n");
 }
 
-static void send_data(void *p)
-{
-    printf("Send Data to peer '%s' size:%d\n",
-        ((struct p_event*)p)->snd_packet.data, ((struct p_event*)p)->size);
-    send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
+static void send_data(void *p) {
+    snd_data(p);
+//    send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
     set_timer(CONNECT_TIMEOUT);
+    printf("Send Data to peer '%s' size:%d\n",
+           ((struct p_event*)p)->snd_packet.data, ((struct p_event*)p)->size);
 }
 
-static void report_data(void *p)
-{
+static void report_data(void *p) {
+    snd_ack();
+//    send_packet(F_ACK, NULL, 0);
     printf("Data Arrived data='%s' size:%d\n",
-        ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
-    send_packet(F_ACK, NULL, 0);
+           ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
 }
 
-static void remove_data(void *p)
-{
-    set_timer(0);           // Stop Timer
-    timeout_count = 1;      // counter init
+static void report_ack(void *p) {
+    stp_timer();
+    init_counter();
+    
+//    set_timer(0);
+//    timeout_count = 1;
     printf("Peer got data '%s' \n",
            ((struct p_event*)p)->snd_packet.data);
 }
@@ -167,7 +199,7 @@ struct state_action p_FSM[NUM_STATE][NUM_EVENT] = {
    { send_data, wait_ACK }, { NULL, CONNECTED }, { NULL, CONNECTED }},
     
   // - wait_ACK state
-  {{ NULL, wait_ACK }, { close_con, wait_ACK }, { remove_data, CONNECTED },
+  {{ NULL, wait_ACK }, { close_con, wait_ACK }, { report_ack, CONNECTED },
    { report_data, wait_ACK }, { NULL, wait_ACK }, { close_con, wait_ACK },
    { NULL, wait_ACK }, { send_data, wait_ACK }, { close_con, wait_ACK }}
 };
@@ -183,7 +215,7 @@ loop:
         if (timedout) {
             timedout = 0;
 			printf("timeout_count: %d\n", timeout_count);
-			if (timeout_count++ >= CONNECT_TRY) { // ej
+			if (timeout_count++ >= CONNECT_TRY) {
 				event.event = TIMEOUT_3;
 				timeout_count = 1;
             } else if (c_state == CON_sent || c_state == wait_ACK) {
