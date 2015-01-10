@@ -9,7 +9,7 @@
 #include "util.h"
 
 #define CONNECT_TIMEOUT 2
-#define CONNECT_TRY 10
+#define CONNECT_TRY 3
 
 #define NUM_STATE   4
 #define NUM_EVENT   9
@@ -37,8 +37,6 @@ struct packet {                 // 504 Byte Packet to & from Simulator
     unsigned short size;
     char data[MAX_DATA_SIZE];
 };
-
-// struct packet pkt;
 
 struct p_event {                // Event Structure
     enum proto_event event;
@@ -123,38 +121,30 @@ static void init_counter() {
 static void report_connect(void *p) {
     stp_timer();
     init_counter();
-    
-//    set_timer(0);
-//    timeout_count = 1;
     printf("Connected\n");
 }
 
 static void send_ack(void *p) {
     snd_ack();
-//    send_packet(F_ACK, NULL, 0);
 }
 
 static void passive_con(void *p) {
     snd_ack();
-//    send_packet(F_ACK, NULL, 0);
     report_connect(NULL);
 }
 
 static void active_con(void *p) {
     snd_con();
-//    send_packet(F_CON, NULL, 0);
     set_timer(CONNECT_TIMEOUT);
 }
 
 static void close_con(void *p) {
     snd_fin();
-//    send_packet(F_FIN, NULL, 0);
     printf("Connection Closed\n");
 }
 
 static void send_data(void *p) {
     snd_data(p);
-//    send_packet(F_DATA, (struct p_event *)p, ((struct p_event *)p)->size);
     set_timer(CONNECT_TIMEOUT);
     printf("Send Data to peer '%s' size:%d\n",
            ((struct p_event*)p)->snd_packet.data, ((struct p_event*)p)->size);
@@ -162,7 +152,6 @@ static void send_data(void *p) {
 
 static void report_data(void *p) {
     snd_ack();
-//    send_packet(F_ACK, NULL, 0);
     printf("Data Arrived data='%s' size:%d\n",
            ((struct p_event*)p)->packet.data, ((struct p_event*)p)->packet.size);
 }
